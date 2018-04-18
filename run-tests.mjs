@@ -23,9 +23,10 @@ import { compileWithHostScheme, OPTIONS,
 
 import assert from 'assert';
 import fs from 'fs';
+import process from 'process';
 import util from 'util';
 
-Error.stackTraceLimit = 64;
+Error.stackTraceLimit = 20;
 
 async function runTest(name, compile = compileWithHostScheme) {
     const bytes = fs.readFileSync(name);
@@ -52,16 +53,29 @@ async function runTest(name, compile = compileWithHostScheme) {
     assert.ok(result != false, "test failed");
 }
 
+async function getTests() {
+    if (process.argv.length > 2) {
+	return process.argv.slice(2);
+    } else {
+	let files = await util.promisify(fs.readdir)('test');
+	return (function* () {
+	    for (const name of files) {
+		yield `test/${name}`;
+	    }
+	})();
+    }
+}
+
 async function runTests() {
     let failures = [];
-    const files = await util.promisify(fs.readdir)('test');
+    const files = await getTests();
     for (const test of files) {
 	if (test.endsWith(".ss")) {
 	    let local_failures = [];
 	    console.info(`Running test ${test}`);
 	    async function run_stage(name, compile) {
 		try {
-		    await runTest(`test/${test}`, compile);
+		    await runTest(test, compile);
 		    console.info(`  ${name} succeeded`);
 		} catch (e) {
 		    console.info(`  ${name} FAILED`);
@@ -110,21 +124,16 @@ async function checkCompilerFixpoint() {
   }
 }
 
-try {
-    let results = runTests().catch((e) => { throw e });
-    if (OPTIONS.stage3) {
-	checkCompilerFixpoint().catch((e) => { throw e });
-    }
-    results.then((failures) => {
-	if (failures.length > 0) {
-	    console.info("Some tests failed:");
-	    for(const failure of failures) {
-		console.info(`    '${failure[0]}': ${failure[1].join(', ')}`);
-	    }
-	    throw new Error("Tests failed");
-	}
-    });
-} catch (e) {
-    console.error(e.stack);
-    throw e;
+let results = runTests();
+if (OPTIONS.stage3) {
+    checkCompilerFixpoint().catch((e) => { throw e; });
 }
+results.then((failures) => {
+    if (failures.length > 0) {
+        console.info("Some tests failed:");
+        for (const failure of failures) {
+            console.info(`    '${failure[0]}': ${failure[1].join(', ')}`);
+        }
+        process.exit(1);
+    }
+});
